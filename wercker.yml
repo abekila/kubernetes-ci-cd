@@ -1,46 +1,117 @@
 #OracleCodeOne Demo
-# This references the default golang container from
-# the Docker Hub: https://registry.hub.docker.com/u/library/golang/
-# If you want Google's container you would reference google/golang
-# Read more about containers on our dev center
-# https://devcenter.wercker.com/overview-and-core-concepts/containers/
 box: golang
-# This is the build pipeline. Pipelines are the core of wercker
-# Read more about pipelines on our dev center
-# https://devcenter.wercker.com/development/pipelines/
-
-# You can also use services such as databases. Read more on our dev center:
-# https://devcenter.wercker.com/administration/services/
-# services:
-    # - postgres
-    # https://devcenter.wercker.com/administration/services/examples/postgresql/
-
-    # - mongo
-    # https://devcenter.wercker.com/administration/services/examples/mongodb/
+dev:
+  steps:
+    - internal/watch:
+        code: |
+          go get github.com/Pallinder/go-randomdata
+          go build -ldflags "-X cityHandler.minversion=`date -u +.%Y%m%d.%H%M%S`" main.go
+          ./source
+        reload: true
+  after-steps:
+    - install-packages:
+        packages: ruby
+    
+# Build definition
 build:
   # The steps that will be executed on build
-  # Steps make up the actions in your pipeline
-  # Read more about steps on our dev center:
-  # https://devcenter.wercker.com/development/steps/
   steps:
-    # Sets the go workspace and places you package
-    # at the right place in the workspace tree
-    - setup-go-workspace
+    # golint step!
+    - wercker/golint
 
-    # Gets the dependencies
     - script:
-        name: go get
+        name: debug
         code: |
-          go get
-
+          ls -l
     # Build the project
     - script:
         name: go build
         code: |
+          go get github.com/Pallinder/go-randomdata
+          go build -ldflags "-X cityHandler.minversion=`date -u +.%Y%m%d.%H%M%S`" main.go
           go build ./...
-
     # Test the project
     - script:
         name: go test
         code: |
           go test ./...
+    - script:
+        name: copy artifacts to output dir
+        code: |
+          # artifacts
+          ls -l
+          cp ${WERCKER_ROOT}/source "$WERCKER_OUTPUT_DIR"
+          cp -a ${WERCKER_ROOT}/kubernetes "$WERCKER_OUTPUT_DIR"
+  after-steps:
+    - install-packages:
+        packages: ruby
+        
+docker-push:
+
+  box:
+    id: golang
+
+  steps:
+    - script:
+        name: copy binaries to /opt/app
+        code: |
+          mkdir -p /opt
+          cp ${WERCKER_ROOT}/source /opt/source
+    # Pushing to a quay.io repository
+    # For other docker repository refer to this doc: http://devcenter.wercker.com/docs/containers/pushing-containers
+    - internal/docker-push:
+        username: $CONTAINER_REGISTRY_USERNAME
+        password: $API_USER_TOKEN
+        repository: $TENANCY_NAME/$REPO_NAME/$APP_NAME
+        registry: $PRIVATE_REGISTRY_PATH
+        tag: ${WERCKER_GIT_BRANCH}-${WERCKER_GIT_COMMIT},latest
+        entrypoint: /opt/source
+        port: 5000/tcp     
+  after-steps:
+    - install-packages:
+        packages: ruby
+  
+deploy:
+
+  box:
+    id: golang
+
+  steps:
+
+    - script:
+        name: debug
+        code: |
+          echo $WERCKER_OUTPUT_DIR
+          ls -l $WERCKER_OUTPUT_DIR
+          echo $WERCKER_ROOT
+          ls -l $WERCKER_ROOT
+    - bash-template:
+        cwd: $WERCKER_ROOT/kubernetes/deployment
+
+    - script:
+        name: Remove template files
+        cwd: $WERCKER_ROOT/kubernetes/deployment
+        code: |
+          rm *.template.yaml
+    - script:
+        name: debug
+        cwd: $WERCKER_ROOT/kubernetes/deployment
+        code: |
+          ls -l
+    - script:
+        name: echo tags
+        code: |
+          cat $WERCKER_ROOT/kubernetes/deployment/deployment.yaml
+          echo "Docker image and tag:"
+          echo "${WERCKER_GIT_BRANCH}-${WERCKER_GIT_COMMIT}"
+          
+    - kubectl:
+        server: $KUBE_ENDPOINT
+        token: $KUBE_USER_TOKEN
+        cwd: $WERCKER_ROOT/kubernetes/deployment
+        insecure-skip-tls-verify: true
+        command: apply -f .
+       
+  after-steps:
+    - install-packages:
+        packages: ruby
