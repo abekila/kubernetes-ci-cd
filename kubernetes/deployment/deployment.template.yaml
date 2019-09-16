@@ -15,7 +15,7 @@ spec:
       imagePullSecrets:
       - name: ocir-secret
       containers:
-      - image: $PRIVATE_REGISTRY_PATH/$TENANCY_NAME/$REPO_NAME/$APP_NAME:${WERCKER_GIT_BRANCH}-${WERCKER_GIT_COMMIT}
+      - image: alpine
         name: webapp
         imagePullPolicy: Always
         ports:
